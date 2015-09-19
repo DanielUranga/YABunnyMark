@@ -1,5 +1,9 @@
 package tests;
 
+import com.daniel.glhaxor.Float32VertexAttribute;
+import com.daniel.glhaxor.GLUniformMatrix3D;
+import com.daniel.glhaxor.Program;
+import com.daniel.glhaxor.Shader;
 import flash.events.Event;
 import flash.events.MouseEvent;
 import flash.geom.Point;
@@ -19,41 +23,35 @@ import openfl.gl.GLTexture;
 import openfl.gl.GLUniformLocation;
 import openfl.utils.Float32Array;
 import openfl.utils.UInt8Array;
+import openfl.utils.Int16Array;
 import openfl.Assets;
 
 class GlTest extends Sprite {
 
-	var tf : TextField;
-
 	var bitmapData : BitmapData;
 	var imageUniform : GLUniformLocation;
-	var modelViewMatrixData : Float32Array;
-	var modelViewMatrixUniform : GLUniformLocation;
-	var projectionMatrixData : Float32Array;
-	var projectionMatrixUniform : GLUniformLocation;
-	var shaderProgram : GLProgram;
-	var texCoordAttribute : Int;
-	var texCoordBuffer : GLBuffer;
-	var texCoords : Float32Array;
+	var indexesBuffer : GLBuffer;
+	var modelViewMatrix : GLUniformMatrix3D;
+	var projectionMatrix : GLUniformMatrix3D;
+	var shaderProgram : Program;
+	var texCoordBuffer : Float32VertexAttribute;
 	var texture : GLTexture;
-	var vertexAttribute : Int;
-	var vertexBuffer : GLBuffer;
-	var vertices : Float32Array;
-	var view : OpenGLView;
+	var vertexBuffer : Float32VertexAttribute;
 
 	var bunnies : Array<Bunny>;
 	var bunnyH : Float;
 	var bunnyW : Float;
 	var gravity : Float;
 	var numBunnies : Int;
+	var tf : TextField;
+	var view : OpenGLView;
 
 	public function new () {
 		super ();
 		bitmapData = Assets.getBitmapData("assets/wabbit_alpha.png");
 		if (OpenGLView.isSupported) {
 			view = new OpenGLView();
-			vertexBuffer = GL.createBuffer();
-			texCoordBuffer = GL.createBuffer();
+			indexesBuffer = GL.createBuffer();
 			initializeShaders();
 			createTexture();
 			view.render = renderView;
@@ -72,10 +70,8 @@ class GlTest extends Sprite {
 
 	function onResize(_) {
 		tf.x = Lib.current.stage.stageWidth - tf.width - 10;
-		var projectionMatrix = Matrix3D.createOrtho (0, Lib.current.stage.stageWidth, Lib.current.stage.stageHeight, 0, 1000, -1000);
-		projectionMatrixData = new Float32Array (projectionMatrix.rawData);
-		var modelViewMatrix = Matrix3D.create2D (0, 0, 1, 0);
-		modelViewMatrixData = new Float32Array(modelViewMatrix.rawData);
+		projectionMatrix = GLUniformMatrix3D.createOrtho (shaderProgram, "uProjectionMatrix", 0, Lib.current.stage.stageWidth, Lib.current.stage.stageHeight, 0, 1000, -1000);
+		modelViewMatrix = GLUniformMatrix3D.create2D (shaderProgram, "uModelViewMatrix", 0, 0, 1, 0);
 	}
 
 	function createCounter () {
@@ -108,56 +104,48 @@ class GlTest extends Sprite {
 			bunnies.push(bunny);
 		}
 		numBunnies = more;
-		vertices = new Float32Array (bunnies.length*12);
-		texCoords = new Float32Array (bunnies.length*12);
+		var indexes = new Int16Array (bunnies.length*6);
+		//texCoords = new Float32Array (bunnies.length*8);
 
+		var idI = 0;
+		var idJ = 0;
 		for (i in 0...bunnies.length) {
+			
 			if (i==0) {
-
-				texCoords[0] = 0;
-				texCoords[1] = 1;
-
-				texCoords[2] = 0;
-				texCoords[3] = 0;
-
-				texCoords[4] = 1;
-				texCoords[5] = 1;
-
-				texCoords[6] = 1;
-				texCoords[7] = 0;
-
-				// Degenerate triangle strip
-				texCoords[8] = 1;
-				texCoords[9] = 0;
-
+				indexes[idI++] = 0;
+				indexes[idI++] = 1;
+				indexes[idI++] = 2;
+				indexes[idI++] = 3;
+				indexes[idI++] = 3;		// Degenerate
 			} else {
-
-				var j = i*(8+4) - 2;
-
-				// Degenerate triangle strip
-
-				texCoords[j+0] = 0;
-				texCoords[j+1] = 1;
-
-				texCoords[j+2] = 0;
-				texCoords[j+3] = 1;
-
-				texCoords[j+4] = 0;
-
-				texCoords[j+5] = 0;
-
-				texCoords[j+6] = 1;
-				texCoords[j+7] = 1;
-
-				texCoords[j+8] = 1;
-				texCoords[j+9] = 0;
-
-				// Degenerate triangle strip
-				texCoords[j+10] = 1;
-				texCoords[j+11] = 0;
-
+				var j = i*4;
+				indexes[idI++] = j+0;	// Degenerate
+				indexes[idI++] = j+0;
+				indexes[idI++] = j+1;
+				indexes[idI++] = j+2;
+				indexes[idI++] = j+3;
+				indexes[idI++] = j+3;	// Degenerate
 			}
+
 		}
+
+		texCoordBuffer.beginPush();
+		for (i in 0...bunnies.length) {
+
+			texCoordBuffer.push2 (0, 1);
+			texCoordBuffer.push2 (0, 0);
+			texCoordBuffer.push2 (1, 1);
+			texCoordBuffer.push2 (1, 0);
+
+		}
+
+		GL.bindBuffer (GL.ELEMENT_ARRAY_BUFFER, indexesBuffer);
+		GL.bufferData (GL.ELEMENT_ARRAY_BUFFER, indexes, GL.STATIC_DRAW);
+		
+		texCoordBuffer.bind ();
+		texCoordBuffer.commit ();
+
+		GL.bindBuffer (GL.ARRAY_BUFFER, null);
 
 		tf.text = "Bunnies:\n" + numBunnies;
 
@@ -165,6 +153,8 @@ class GlTest extends Sprite {
 
 	function updateBunnies () : Void {
 
+		vertexBuffer.beginPush();
+		var j = 0;
 		for (i in 0...bunnies.length) {
 
 			var bunny = bunnies[i];
@@ -195,58 +185,15 @@ class GlTest extends Sprite {
 				bunny.position.y = 0;
 			}
 
-			if (i==0) {
-
-				vertices[0] = bunny.position.x;
-				vertices[1] = bunny.position.y + bunnyH;
-
-				vertices[2] = bunny.position.x;
-				vertices[3] = bunny.position.y;
-
-				vertices[4] = bunny.position.x + bunnyW;
-				vertices[5] = bunny.position.y + bunnyH;
-
-				vertices[6] = bunny.position.x + bunnyW;
-				vertices[7] = bunny.position.y;
-
-				// Degenerate triangle strip
-				vertices[8] = bunny.position.x + bunnyW;
-				vertices[9] = bunny.position.y;
-
-			} else {
-
-				var j = i*(8+4) - 2;
-
-				// Degenerate triangle strip
-				vertices[j+0] = bunny.position.x;
-				vertices[j+1] = bunny.position.y + bunnyH;
-
-				vertices[j+2] = bunny.position.x;
-				vertices[j+3] = bunny.position.y + bunnyH;
-
-				vertices[j+4] = bunny.position.x;
-				vertices[j+5] = bunny.position.y;
-
-				vertices[j+6] = bunny.position.x + bunnyW;
-				vertices[j+7] = bunny.position.y + bunnyH;
-
-				vertices[j+8] = bunny.position.x + bunnyW;
-				vertices[j+9] = bunny.position.y;
-
-				// Degenerate triangle strip
-				vertices[j+10] = bunny.position.x + bunnyW;
-				vertices[j+11] = bunny.position.y;
-
-			}
+			vertexBuffer.push2 (bunny.position.x, bunny.position.y + bunnyH);
+			vertexBuffer.push2 (bunny.position.x, bunny.position.y);
+			vertexBuffer.push2 (bunny.position.x + bunnyW, bunny.position.y + bunnyH);
+			vertexBuffer.push2 (bunny.position.x + bunnyW, bunny.position.y);
 
 		}
 
-		GL.bindBuffer (GL.ARRAY_BUFFER, vertexBuffer);
-		GL.bufferData (GL.ARRAY_BUFFER, vertices, GL.STATIC_DRAW);
-		GL.bindBuffer (GL.ARRAY_BUFFER, null);
-
-		GL.bindBuffer (GL.ARRAY_BUFFER, texCoordBuffer);
-		GL.bufferData (GL.ARRAY_BUFFER, texCoords, GL.STATIC_DRAW);
+		vertexBuffer.bind();
+		vertexBuffer.commit();
 		GL.bindBuffer (GL.ARRAY_BUFFER, null);
 
 	}
@@ -268,13 +215,6 @@ class GlTest extends Sprite {
 				gl_Position = uProjectionMatrix * uModelViewMatrix * vec4 (aVertexPosition, 1.0, 1.0);
 			}";
 
-		var vertexShader = GL.createShader (GL.VERTEX_SHADER);
-		GL.shaderSource (vertexShader, vertexShaderSource);
-		GL.compileShader (vertexShader);
-
-		if (GL.getShaderParameter (vertexShader, GL.COMPILE_STATUS) == 0) {
-			throw "Error compiling vertex shader";
-		}
 
 		var fragmentShaderSource =
 
@@ -295,32 +235,21 @@ class GlTest extends Sprite {
 				#end
 			"}";
 
-		var fragmentShader = GL.createShader (GL.FRAGMENT_SHADER);
-		GL.shaderSource (fragmentShader, fragmentShaderSource);
-		GL.compileShader (fragmentShader);
+		shaderProgram = new Program(
+			new Shader (ShaderKind.Vertex, vertexShaderSource),
+			new Shader (ShaderKind.Fragment, fragmentShaderSource));
 
-		if (GL.getShaderParameter (fragmentShader, GL.COMPILE_STATUS) == 0) {
-
-			throw "Error compiling fragment shader";
-
-		}
-
-		shaderProgram = GL.createProgram ();
-		GL.attachShader (shaderProgram, vertexShader);
-		GL.attachShader (shaderProgram, fragmentShader);
-		GL.linkProgram (shaderProgram);
-
-		if (GL.getProgramParameter (shaderProgram, GL.LINK_STATUS) == 0) {
+		if (GL.getProgramParameter (shaderProgram.program, GL.LINK_STATUS) == 0) {
 
 			throw "Unable to initialize the shader program.";
 
 		}
 
-		vertexAttribute = GL.getAttribLocation (shaderProgram, "aVertexPosition");
-		texCoordAttribute = GL.getAttribLocation (shaderProgram, "aTexCoord");
-		projectionMatrixUniform = GL.getUniformLocation (shaderProgram, "uProjectionMatrix");
-		modelViewMatrixUniform = GL.getUniformLocation (shaderProgram, "uModelViewMatrix");
-		imageUniform = GL.getUniformLocation (shaderProgram, "uImage0");
+		vertexBuffer = new Float32VertexAttribute (shaderProgram, "aVertexPosition", 2);
+		texCoordBuffer = new Float32VertexAttribute (shaderProgram, "aTexCoord", 2);
+		projectionMatrix = new GLUniformMatrix3D (shaderProgram, "uProjectionMatrix");
+		modelViewMatrix = new GLUniformMatrix3D (shaderProgram, "uModelViewMatrix");
+		imageUniform = GL.getUniformLocation (shaderProgram.program, "uImage0");
 
 	}
 
@@ -332,14 +261,14 @@ class GlTest extends Sprite {
 		var pixelData = new UInt8Array(bitmapData.getPixels(bitmapData.rect));
 		#end
 
-		texture = GL.createTexture();
-		GL.bindTexture(GL.TEXTURE_2D, texture);
-		GL.texParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_S, GL.CLAMP_TO_EDGE);
-		GL.texParameteri(GL.TEXTURE_2D, GL.TEXTURE_WRAP_T, GL.CLAMP_TO_EDGE);
-		GL.texImage2D(GL.TEXTURE_2D, 0, GL.RGBA, bitmapData.width, bitmapData.height, 0, GL.RGBA, GL.UNSIGNED_BYTE, pixelData);
-		GL.texParameteri(GL.TEXTURE_2D, GL.TEXTURE_MAG_FILTER, GL.NEAREST);
-		GL.texParameteri(GL.TEXTURE_2D, GL.TEXTURE_MIN_FILTER, GL.NEAREST);
-		GL.bindTexture(GL.TEXTURE_2D, null);
+		texture = GL.createTexture ();
+		GL.bindTexture (GL.TEXTURE_2D, texture);
+		GL.texParameteri (GL.TEXTURE_2D, GL.TEXTURE_WRAP_S, GL.CLAMP_TO_EDGE);
+		GL.texParameteri (GL.TEXTURE_2D, GL.TEXTURE_WRAP_T, GL.CLAMP_TO_EDGE);
+		GL.texImage2D (GL.TEXTURE_2D, 0, GL.RGBA, bitmapData.width, bitmapData.height, 0, GL.RGBA, GL.UNSIGNED_BYTE, pixelData);
+		GL.texParameteri (GL.TEXTURE_2D, GL.TEXTURE_MAG_FILTER, GL.NEAREST);
+		GL.texParameteri (GL.TEXTURE_2D, GL.TEXTURE_MIN_FILTER, GL.NEAREST);
+		GL.bindTexture (GL.TEXTURE_2D, null);
 
 	}
 
@@ -352,9 +281,10 @@ class GlTest extends Sprite {
 		GL.clearColor (1.0, 1.0, 1.0, 1.0);
 		GL.clear (GL.COLOR_BUFFER_BIT);
 
-		GL.useProgram (shaderProgram);
-		GL.enableVertexAttribArray (vertexAttribute);
-		GL.enableVertexAttribArray (texCoordAttribute);
+		GL.useProgram (shaderProgram.program);
+
+		vertexBuffer.enableVertexAttribArray ();
+		texCoordBuffer.enableVertexAttribArray ();
 
 		GL.activeTexture (GL.TEXTURE0);
 		GL.bindTexture (GL.TEXTURE_2D, texture);
@@ -363,26 +293,27 @@ class GlTest extends Sprite {
 		GL.enable (GL.TEXTURE_2D);
 		#end
 
-		GL.bindBuffer (GL.ARRAY_BUFFER, vertexBuffer);
-		GL.vertexAttribPointer (vertexAttribute, 2, GL.FLOAT, false, 0, 0);
-		GL.bindBuffer (GL.ARRAY_BUFFER, texCoordBuffer);
-		GL.vertexAttribPointer (texCoordAttribute, 2, GL.FLOAT, false, 0, 0);
+		GL.bindBuffer (GL.ELEMENT_ARRAY_BUFFER, indexesBuffer);
+		vertexBuffer.bind ();
+		texCoordBuffer.bind ();
 
-		GL.uniformMatrix4fv (projectionMatrixUniform, false, projectionMatrixData);
-		GL.uniformMatrix4fv (modelViewMatrixUniform, false, modelViewMatrixData);
+		projectionMatrix.commit();
+		modelViewMatrix.commit();
 		GL.uniform1i (imageUniform, 0);
 
-		GL.drawArrays (GL.TRIANGLE_STRIP, 0, bunnies.length*6);
+		GL.drawElements(GL.TRIANGLE_STRIP, bunnies.length*6, GL.UNSIGNED_SHORT, 0);
 
 		GL.bindBuffer (GL.ARRAY_BUFFER, null);
+		GL.bindBuffer (GL.ELEMENT_ARRAY_BUFFER, null);
 		GL.bindTexture (GL.TEXTURE_2D, null);
 
 		#if desktop
 		GL.disable (GL.TEXTURE_2D);
 		#end
 
-		GL.disableVertexAttribArray (vertexAttribute);
-		GL.disableVertexAttribArray (texCoordAttribute);
+		vertexBuffer.disableVertexAttribArray ();
+		texCoordBuffer.disableVertexAttribArray ();
+
 		GL.useProgram (null);
 
 	}
