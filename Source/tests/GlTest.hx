@@ -34,8 +34,10 @@ class GlTest extends Sprite {
 	var modelViewMatrix : GLUniformMatrix3D;
 	var projectionMatrix : GLUniformMatrix3D;
 	var shaderProgram : Program;
-	var texCoordBuffer : Float32VertexAttribute;
 	var texture : GLTexture;
+
+	var vertexRotation : Float32VertexAttribute;
+	var texCoordBuffer : Float32VertexAttribute;
 	var vertexBuffer : Float32VertexAttribute;
 
 	var bunnies : Array<Bunny>;
@@ -100,7 +102,8 @@ class GlTest extends Sprite {
 			bunny.speedX = Math.random() * 5;
 			bunny.speedY = (Math.random() * 5) - 2.5;
 			//bunny.scale = 0.3 + Math.random();
-			//bunny.rotation = 15 - Math.random() * 30;
+			bunny.rotation = Math.random()*2*Math.PI;
+			bunny.rotationSpeed = Math.random()*0.2 - 0.1;
 			bunnies.push(bunny);
 		}
 		numBunnies = more;
@@ -154,10 +157,14 @@ class GlTest extends Sprite {
 	function updateBunnies () : Void {
 
 		vertexBuffer.beginPush();
+		vertexRotation.beginPush();
 		var j = 0;
+		var center = new Point();
 		for (i in 0...bunnies.length) {
 
 			var bunny = bunnies[i];
+			center.x = bunny.position.x + bunnyW/2;
+			center.y = bunny.position.y + bunnyH/2;
 
 			bunny.position.x += bunny.speedX;
 			bunny.position.y += bunny.speedY;
@@ -185,15 +192,26 @@ class GlTest extends Sprite {
 				bunny.position.y = 0;
 			}
 
-			vertexBuffer.push2 (bunny.position.x, bunny.position.y + bunnyH);
-			vertexBuffer.push2 (bunny.position.x, bunny.position.y);
+			bunny.rotation+=bunny.rotationSpeed;
+			if (bunny.rotation>=2*Math.PI) 	bunny.rotation-=2*Math.PI;
+			if (bunny.rotation<0)			bunny.rotation+=2*Math.PI;
+
 			vertexBuffer.push2 (bunny.position.x + bunnyW, bunny.position.y + bunnyH);
 			vertexBuffer.push2 (bunny.position.x + bunnyW, bunny.position.y);
+			vertexBuffer.push2 (bunny.position.x, bunny.position.y + bunnyH);
+			vertexBuffer.push2 (bunny.position.x, bunny.position.y);
+
+			vertexRotation.push3 (bunny.rotation, center.x, center.y);
+			vertexRotation.push3 (bunny.rotation, center.x, center.y);
+			vertexRotation.push3 (bunny.rotation, center.x, center.y);
+			vertexRotation.push3 (bunny.rotation, center.x, center.y);
 
 		}
 
 		vertexBuffer.bind();
 		vertexBuffer.commit();
+		vertexRotation.bind();
+		vertexRotation.commit();
 		GL.bindBuffer (GL.ARRAY_BUFFER, null);
 
 	}
@@ -204,6 +222,7 @@ class GlTest extends Sprite {
 		var vertexShaderSource =
 
 			"attribute vec2 aVertexPosition;
+			attribute vec3 aVertexRotation;	// s = angle, t = center X, p = center Y
 			attribute vec2 aTexCoord;
 			varying vec2 vTexCoord;
 
@@ -211,8 +230,20 @@ class GlTest extends Sprite {
 			uniform mat4 uProjectionMatrix;
 
 			void main(void) {
+
+				float s = sin (aVertexRotation.s);
+				float c = cos (aVertexRotation.s);
+				mat2 mRotation = mat2 (
+					c, -s,
+					s, c 
+				);
+				vec2 aRotatedPosition = aVertexPosition.xy - aVertexRotation.tp;
+				aRotatedPosition = mRotation * aRotatedPosition;
+				aRotatedPosition = aRotatedPosition + aVertexRotation.tp;
+
 				vTexCoord = aTexCoord;
-				gl_Position = uProjectionMatrix * uModelViewMatrix * vec4 (aVertexPosition, 1.0, 1.0);
+				gl_Position = uProjectionMatrix * uModelViewMatrix * vec4 (aRotatedPosition, 1.0, 1.0);
+
 			}";
 
 
@@ -246,6 +277,7 @@ class GlTest extends Sprite {
 		}
 
 		vertexBuffer = new Float32VertexAttribute (shaderProgram, "aVertexPosition", 2);
+		vertexRotation = new Float32VertexAttribute (shaderProgram, "aVertexRotation", 3);
 		texCoordBuffer = new Float32VertexAttribute (shaderProgram, "aTexCoord", 2);
 		projectionMatrix = new GLUniformMatrix3D (shaderProgram, "uProjectionMatrix");
 		modelViewMatrix = new GLUniformMatrix3D (shaderProgram, "uModelViewMatrix");
@@ -283,9 +315,6 @@ class GlTest extends Sprite {
 
 		GL.useProgram (shaderProgram.program);
 
-		vertexBuffer.enableVertexAttribArray ();
-		texCoordBuffer.enableVertexAttribArray ();
-
 		GL.activeTexture (GL.TEXTURE0);
 		GL.bindTexture (GL.TEXTURE_2D, texture);
 
@@ -294,7 +323,11 @@ class GlTest extends Sprite {
 		#end
 
 		GL.bindBuffer (GL.ELEMENT_ARRAY_BUFFER, indexesBuffer);
+		vertexBuffer.enableVertexAttribArray ();
 		vertexBuffer.bind ();
+		vertexRotation.enableVertexAttribArray ();
+		vertexRotation.bind ();
+		texCoordBuffer.enableVertexAttribArray ();
 		texCoordBuffer.bind ();
 
 		projectionMatrix.commit();
@@ -312,6 +345,7 @@ class GlTest extends Sprite {
 		#end
 
 		vertexBuffer.disableVertexAttribArray ();
+		vertexRotation.disableVertexAttribArray ();
 		texCoordBuffer.disableVertexAttribArray ();
 
 		GL.useProgram (null);
